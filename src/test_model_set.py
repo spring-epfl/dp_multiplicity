@@ -1,0 +1,90 @@
+import pathlib
+import pytest
+import tempfile
+import warnings
+import numpy as np
+
+from model_set import ModelSet, PickleSerializer, DillSerializer
+
+
+@pytest.fixture
+def model_dir():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield pathlib.Path(tmpdir)
+
+
+@pytest.fixture(params=["pickle", "dill"])
+def serializer(request):
+    if request.param == "pickle":
+        return PickleSerializer()
+    elif request.param == "dill":
+        return DillSerializer()
+
+
+def test_train(model_dir, serializer):
+    model_set = ModelSet(model_path=model_dir, serializer=serializer)
+    assert not (model_dir / ModelSet.model_filename_template.format(seed=49)).exists()
+    train_func = lambda seed: "whatever"
+    model_set.train(train_func, seeds=50)
+    assert (model_dir / ModelSet.model_filename_template.format(seed=49)).exists()
+    assert not (model_dir / ModelSet.model_filename_template.format(seed=50)).exists()
+
+
+def test_seeds(model_dir, serializer):
+    model_set = ModelSet(model_path=model_dir, serializer=serializer)
+    train_func = lambda seed: "whatever"
+    model_set.train(train_func, seeds=50)
+    assert set(model_set.get_seeds()) == set(range(50))
+
+
+def test_apply(model_dir, serializer):
+    model_set = ModelSet(model_path=model_dir, serializer=serializer)
+    train_func = lambda seed: seed
+    model_set.train(train_func, seeds=50)
+    results = model_set.apply(lambda model: model)
+    assert sum(results) == sum(range(50))
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from sklearn.datasets import load_diabetes
+from diffprivlib.models import LinearRegression
+from diffprivlib.utils import PrivacyLeakWarning
+
+
+class StubModule(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc = nn.Linear(10, 1)
+
+    def forward(self, x):
+        return self.fc(x)
+
+
+def make_train_func(model_framework, X, y):
+    if model_framework == "torch_module":
+        return lambda seed: StubModule()
+    elif model_framework == "sklearn":
+        return lambda seed: LinearRegression(epsilon=1.0, random_state=seed).fit(X, y)
+
+
+@pytest.mark.filterwarnings("ignore:::diffprivlib")
+@pytest.mark.parametrize("model_framework", ["torch_module", "sklearn"])
+def test_e2e(model_dir, model_framework, serializer):
+    X, y = load_diabetes(return_X_y=True)
+    model_set = ModelSet(model_path=model_dir)
+    train_func = make_train_func(model_framework, X, y)
+    model_set.train(train_func, seeds=30)
+
+    if model_framework == "torch_module":
+        apply_func = lambda model: np.mean(
+            (model(torch.tensor(X, requires_grad=False).float()).detach().numpy() - y)
+            ** 2
+        )
+    else:
+        apply_func = lambda model: np.mean((model.predict(X) - y) ** 2)
+
+    scores = model_set.apply(apply_func)
+    assert sum(scores) / len(scores) > 0
