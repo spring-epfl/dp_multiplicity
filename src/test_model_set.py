@@ -23,11 +23,28 @@ def serializer(request):
 
 def test_train(model_dir, serializer):
     model_set = ModelSet(model_path=model_dir, serializer=serializer)
-    assert not (model_dir / ModelSet.model_filename_template.format(seed=49)).exists()
+    assert not (model_dir / model_set.model_filename_template.format(seed=49)).exists()
     train_func = lambda seed: "whatever"
     model_set.train(train_func, seeds=50)
-    assert (model_dir / ModelSet.model_filename_template.format(seed=49)).exists()
-    assert not (model_dir / ModelSet.model_filename_template.format(seed=50)).exists()
+    assert (model_dir / model_set.model_filename_template.format(seed=49)).exists()
+    assert not (model_dir / model_set.model_filename_template.format(seed=50)).exists()
+
+
+def test_train_overwrite(model_dir, serializer):
+    model_set1 = ModelSet(model_path=model_dir, serializer=serializer)
+    runs = []
+
+    def train_func(seed):
+        runs.append(True)
+
+    model_set1.train(train_func, seeds=3, require="sharedmem")
+    assert len(runs) == 3
+
+    runs.clear()
+    assert len(runs) == 0
+    model_set2 = ModelSet(model_path=model_dir, serializer=serializer)
+    model_set2.train(train_func, seeds=3 + 2, require="sharedmem")
+    assert len(runs) == 2
 
 
 def test_seeds(model_dir, serializer):
@@ -70,18 +87,28 @@ def make_train_func(model_framework, X, y):
         return lambda seed: LinearRegression(epsilon=1.0, random_state=seed).fit(X, y)
 
 
+def make_eval_func(model_framework, X, y):
+    if model_framework == "torch_module":
+        return (
+            lambda model: (model(torch.tensor(X).float()).detach().cpu().numpy() - y)
+            ** 2
+        )
+    elif model_framework == "sklearn":
+        return lambda model: model.score(X, y)
+
+
 @pytest.mark.filterwarnings("ignore:::diffprivlib")
 @pytest.mark.parametrize("model_framework", ["torch_module", "sklearn"])
 def test_e2e(model_dir, model_framework, serializer):
     X, y = load_diabetes(return_X_y=True)
     model_set = ModelSet(model_path=model_dir)
     train_func = make_train_func(model_framework, X, y)
-    model_set.train(train_func, seeds=30)
+    eval_func = make_eval_func(model_framework, X, y)
+    model_set.train(train_func=train_func, eval_func=eval_func, seeds=30)
 
     if model_framework == "torch_module":
         apply_func = lambda model: np.mean(
-            (model(torch.tensor(X, requires_grad=False).float()).detach().numpy() - y)
-            ** 2
+            (model(torch.tensor(X).float()).detach().numpy() - y) ** 2
         )
     else:
         apply_func = lambda model: np.mean((model.predict(X) - y) ** 2)
