@@ -1,5 +1,5 @@
 import pytest
-from loader import load_dataset, targets
+from .loader import load_dataset, targets
 
 
 dataset_names = list(targets.keys())

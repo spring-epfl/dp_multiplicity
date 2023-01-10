@@ -2,11 +2,11 @@
 Author: Lua Streit
 """
 
-
+import pathlib
 import pandas as pd
 
 
-DATA_DIR = "data"
+DATA_DIR = pathlib.Path(__file__).parent.resolve() / "data"
 
 
 # Dict of dataset name to label target, used to convert the 'label' column to 0/1 vector
@@ -25,13 +25,13 @@ targets = {
     "ctg": 1,
     "cylinder-bands": "noband",
     "dermatology": 1,
-    "german_credit": 1,
+    "german-credit": 1,
     "heart-cleveland": range(1, 5 + 1),
     "ilpd": 1,
     "mammo": 1,
     "mushroom": "p",
     "wine": 2,
-    "wine_qual": range(6, 9 + 1),
+    "wine-qual": range(6, 9 + 1),
 }
 
 # Dict of dataset name to column names, used to build the pandas DataFrames
@@ -370,7 +370,7 @@ columns = {
         "age",
         "label",
     ],
-    "german_credit": [
+    "german-credit": [
         "Status_of_checking_account",
         "Duration_in_months",
         "Credit_history",
@@ -464,7 +464,7 @@ columns = {
         "OD280_OD315",
         "Proline",
     ],
-    "wine_qual": [
+    "wine-qual": [
         "fixed.acidity",
         "volatile.acidity",
         "citric.acid",
@@ -559,7 +559,7 @@ german_mappings = {
 }
 
 
-def load_texas():
+def load_texas(one_hot_encoded=True, dropna=False):
     """
     Loads Texas Hospital Discharge dataset.
     Code is based on a script by Theresa Stadler.
@@ -567,7 +567,7 @@ def load_texas():
         X: DataFrame with the features
         y: DataFrame with the label, values are only 0 and 1
     """
-    TEXAS_PATH = DATA_DIR + "/texas/PUDF_base1_{}q2013_tab.txt"
+    TEXAS_PATH = DATA_DIR / "texas/PUDF_base1_{}q2013_tab.txt"
 
     cat_cols = [
         "TYPE_OF_ADMISSION",
@@ -631,20 +631,24 @@ def one_hot_encode(df, sep="~"):
         new_df: DataFrame with a MultiIndex column index, containing only binary features
     """
     # Initialize the DataFrame
-    new_df = pd.DataFrame()
+    new_dfs = {}
     for col in df.columns:
         # Dummy column, and if this column contains nan, create a dummy column for nans as well
-        temp_df = pd.get_dummies(
-            df[[col]], columns=[col], prefix_sep=sep, dummy_na=df[col].isna().any()
-        )
-        for cat in temp_df.columns:
-            new_df[cat] = temp_df[cat]
-    new_df.columns = pd.MultiIndex.from_tuples([c.split(sep) for c in new_df.columns])
+        if df[col].dtype in ["categorical", "object"]:
+            temp_df = pd.get_dummies(
+                df[[col]], columns=[col], prefix_sep=sep, dummy_na=df[col].isna().any()
+            )
+            for cat in temp_df.columns:
+                new_dfs[cat] = temp_df[cat]
+        else:
+            new_dfs[col] = df[col]
 
-    return new_df
+    result = pd.DataFrame.from_dict(new_dfs)
+    # result.columns = pd.MultiIndex.from_tuples([c.split(sep) for c in new_dfs.keys()])
+    return result
 
 
-def load_dataset(name, one_hot_encoded=True):
+def load_dataset(name, one_hot_encoded=True, dropna=False):
     """
     Loads the dataset with the given name, and returns two DataFrames with the features and label.
 
@@ -657,7 +661,7 @@ def load_dataset(name, one_hot_encoded=True):
         y: DataFrame with the label, values are only 0 and 1
     """
     if name == "texas":
-        return load_texas()
+        return load_texas(one_hot_encoded=one_hot_encoded, dropna=dropna)
     elif name not in targets.keys():
         raise ValueError(f"Unknown dataset: {name}")
 
@@ -665,7 +669,7 @@ def load_dataset(name, one_hot_encoded=True):
 
     # Load the data from the csv file
     df = pd.read_csv(
-        f"{DATA_DIR}/{name}.csv",
+        DATA_DIR / f"{name}.csv",
         sep=",",
         skipinitialspace=True,
         header=None,
@@ -680,11 +684,17 @@ def load_dataset(name, one_hot_encoded=True):
         df["label"] = (df["label"] == targets[name]).astype(int)
 
     # If the dataset is german, replace the encoded categories by their meaning
-    if name == "german_credit":
+    if name == "german-credit":
         df = df.replace(german_mappings)
+
+    if dropna:
+        df = df.dropna()
 
     # Create the dataframe of features
     X = df.drop(columns=["label"])
     y = df["label"]
+
+    if one_hot_encoded:
+        X = one_hot_encode(X)
 
     return X, y
