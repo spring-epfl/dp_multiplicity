@@ -3,6 +3,7 @@ import pickle
 import joblib
 import pathlib
 import itertools
+import warnings
 
 import wandb
 from tqdm import autonotebook as tqdm
@@ -104,9 +105,9 @@ class ModelSet:
         self,
         train_func,
         condition_func,
-        target_num_seeds,
+        target_num_models,
         eval_func=None,
-        max_seeds=1000,
+        max_num_models=1000,
         overwrite=False,
         verbose=False,
         n_jobs=4,
@@ -118,13 +119,14 @@ class ModelSet:
         Args:
           train_func: Function which takes as input a seed and returns a model.
           condition_func: Function for computing whether a model satisfies the condition.
-          target_num_seeds: Target number of models satisfying the condition.
+          target_num_models: Target number of models satisfying the condition.
           eval_func: Function for computing model metrics for logging.
           overwrite: Whether to train again if a model file for a given seed exists.
+          verbose: Whether to show a tqdm progress bar.
           n_jobs: Number of jobs to execute in parallel.
         """
         self.model_path.mkdir(exist_ok=True)
-        full_seed_range = range(max_seeds)
+        full_seed_range = range(max_num_models)
 
         seed_range = []
         existing_seed_range = []
@@ -144,12 +146,17 @@ class ModelSet:
             )
 
         num_condition_models = count_condition(existing_seed_range)
+
         with joblib.Parallel(n_jobs=n_jobs) as parallel:
             it = batched(seed_range, n_jobs)
             if verbose:
-                pbar = tqdm.tqdm(total=target_num_seeds)
+                pbar = tqdm.tqdm(total=target_num_models)
                 pbar.update(num_condition_models)
+
             for seed_batch in it:
+                if num_condition_models >= target_num_models:
+                    break
+
                 parallel(
                     joblib.delayed(self.wrapped_train_func)(
                         seed=seed, train_func=train_func, eval_func=eval_func
@@ -160,15 +167,17 @@ class ModelSet:
                 num_condition_models += new_counts
                 if verbose:
                     pbar.update(new_counts)
-                if num_condition_models >= target_num_seeds:
-                    break
+
+        if num_condition_models < target_num_models:
+            warnings.warn(
+                f"Target number of models not achieved. Got: {num_condition_models}"
+            )
 
     def train(
         self,
         train_func,
         seeds,
         eval_func=None,
-        criterion_func=None,
         overwrite=False,
         verbose=False,
         n_jobs=4,
@@ -181,12 +190,9 @@ class ModelSet:
           train_func: Function which takes as input a seed and returns a model.
           seeds: Either a list of seeds of a number of seeds to train.
           eval_func: Function for computing model metrics for logging.
-          criterion_func: Function for computing whether a model fits a criterion.
-            If such function is provided and the seeds value is a number, we will
-            train until 'seeds' models satisfy the criterion. This turns the training
-            into a kind of reservoir sampling.
-          n_jobs: Number of jobs to execute in parallel.
           overwrite: Whether to train again if a model file for a given seed exists.
+          verbose: Whether to show a tqdm progress bar.
+          n_jobs: Number of jobs to execute in parallel.
         """
         self.model_path.mkdir(exist_ok=True)
         if isinstance(seeds, int):

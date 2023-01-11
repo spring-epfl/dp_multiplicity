@@ -53,13 +53,31 @@ def test_train_until_condition(model_dir, serializer, verbose):
     model_set = ModelSet(model_path=model_dir, serializer=serializer)
     score_values = [0.1] * 5 + [0.9] * 5 + [0.1] + [0.9] * 5
     train_func = lambda seed: score_values[seed]
-    condition_func = lambda val: val > 0.5
+    condition_func = lambda val: val < 0.5
     model_set.train_until_condition(
-        train_func, condition_func, 6, max_seeds=len(score_values), verbose=verbose
+        train_func,
+        condition_func,
+        target_num_models=6,
+        max_num_models=len(score_values),
+        verbose=verbose,
     )
     assert sorted(model_set.get_seeds()) == list(range(12))
     condition_flags = model_set.apply(condition_func)
     assert sum(condition_flags) == 6
+
+
+def test_train_until_condition_failed(model_dir, serializer):
+    model_set = ModelSet(model_path=model_dir, serializer=serializer)
+    score_values = [0.1] * 5 + [0.9] * 5 + [0.1] + [0.9] * 5
+    train_func = lambda seed: score_values[seed]
+    condition_func = lambda val: val < 0.5
+    with pytest.warns(match="Target number of models not achieved"):
+        model_set.train_until_condition(
+            train_func,
+            condition_func,
+            target_num_models=7,
+            max_num_models=len(score_values),
+        )
 
 
 def test_seeds(model_dir, serializer):
