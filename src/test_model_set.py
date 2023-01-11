@@ -21,11 +21,12 @@ def serializer(request):
         return DillSerializer()
 
 
-def test_train(model_dir, serializer):
+@pytest.mark.parametrize("verbose", [False, True])
+def test_train(model_dir, serializer, verbose):
     model_set = ModelSet(model_path=model_dir, serializer=serializer)
     assert not (model_dir / model_set.model_filename_template.format(seed=49)).exists()
     train_func = lambda seed: "whatever"
-    model_set.train(train_func, seeds=50)
+    model_set.train(train_func, seeds=50, verbose=verbose)
     assert (model_dir / model_set.model_filename_template.format(seed=49)).exists()
     assert not (model_dir / model_set.model_filename_template.format(seed=50)).exists()
 
@@ -47,6 +48,20 @@ def test_train_overwrite(model_dir, serializer):
     assert len(runs) == 2
 
 
+@pytest.mark.parametrize("verbose", [False, True])
+def test_train_until_condition(model_dir, serializer, verbose):
+    model_set = ModelSet(model_path=model_dir, serializer=serializer)
+    score_values = [0.1] * 5 + [0.9] * 5 + [0.1] + [0.9] * 5
+    train_func = lambda seed: score_values[seed]
+    condition_func = lambda val: val > 0.5
+    model_set.train_until_condition(
+        train_func, condition_func, 6, max_seeds=len(score_values), verbose=verbose
+    )
+    assert sorted(model_set.get_seeds()) == list(range(12))
+    condition_flags = model_set.apply(condition_func)
+    assert sum(condition_flags) == 6
+
+
 def test_seeds(model_dir, serializer):
     model_set = ModelSet(model_path=model_dir, serializer=serializer)
     train_func = lambda seed: "whatever"
@@ -54,12 +69,21 @@ def test_seeds(model_dir, serializer):
     assert set(model_set.get_seeds()) == set(range(50))
 
 
-def test_apply(model_dir, serializer):
+@pytest.mark.parametrize("verbose", [False, True])
+def test_apply(model_dir, serializer, verbose):
     model_set = ModelSet(model_path=model_dir, serializer=serializer)
     train_func = lambda seed: seed
     model_set.train(train_func, seeds=50)
-    results = model_set.apply(lambda model: model)
+    results = model_set.apply(lambda model: model, verbose=verbose)
     assert sum(results) == sum(range(50))
+
+
+def test_apply_bad_seeds(model_dir, serializer):
+    model_set = ModelSet(model_path=model_dir, serializer=serializer)
+    train_func = lambda seed: seed
+    model_set.train(train_func, seeds=50)
+    with pytest.raises(ValueError):
+        model_set.apply(lambda model: model, seeds=[51])
 
 
 import torch
@@ -104,7 +128,7 @@ def test_e2e(model_dir, model_framework, serializer):
     model_set = ModelSet(model_path=model_dir)
     train_func = make_train_func(model_framework, X, y)
     eval_func = make_eval_func(model_framework, X, y)
-    model_set.train(train_func=train_func, eval_func=eval_func, seeds=30)
+    model_set.train(train_func=train_func, eval_func={"score": eval_func}, seeds=30)
 
     if model_framework == "torch_module":
         apply_func = lambda model: np.mean(
