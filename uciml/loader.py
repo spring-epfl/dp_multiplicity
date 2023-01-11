@@ -588,8 +588,6 @@ def load_texas(one_hot_encoded=True, dropna=False):
         **{col: "float" for col in num_cols},
     }
 
-    print("Loading Texas...")
-
     # Read each of the 4 files of the dataset and put them in a list
     q = []
     for i in range(4):
@@ -664,8 +662,6 @@ def load_dataset(name, one_hot_encoded=True, dropna=False):
         return load_texas(one_hot_encoded=one_hot_encoded, dropna=dropna)
     elif name not in targets.keys():
         raise ValueError(f"Unknown dataset: {name}")
-
-    print(f"Loading {name}...")
 
     # Load the data from the csv file
     df = pd.read_csv(
