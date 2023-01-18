@@ -1,7 +1,6 @@
 import pathlib
 
 import fire
-import wandb
 from typing import Optional
 
 from sklearn.model_selection import train_test_split
@@ -18,7 +17,7 @@ from uciml import load_dataset
 
 common_model_configs = {
     "lr": dict(penalty=None),
-    "rf": dict(n_estimators=10, shuffle=True),
+    "rf": dict(n_estimators=100),
 }
 
 
@@ -64,6 +63,7 @@ def train(
     overwrite: bool = False,
     max_num_models: int = 1000,
     condition: str = "beats_baseline",
+    n_jobs: int = 4,
 ):
     X_train, X_test, y_train, y_test = get_data_splits(dataset)
     print(f"{X_train.shape=}, {X_test.shape=}, {y_train.shape=}, {y_test.shape=}")
@@ -79,6 +79,7 @@ def train(
             "dataset": dataset,
             "model": model,
             "epsilon": epsilon,
+            **common_model_configs[model],
         },
     }
     if condition == "beats_baseline":
@@ -103,6 +104,7 @@ def train(
         target_num_models=num_models,
         max_num_models=max_num_models,
         overwrite=overwrite,
+        n_jobs=n_jobs,
         verbose=True,
     )
 
