@@ -58,7 +58,7 @@ class ModelSet:
         model_filename_template="model_{seed}",
         serializer=None,
         run_params=None,
-        log_artifact=None,
+        log_artifact=False,
     ):
         self.model_path = pathlib.Path(model_path)
         self.model_filename_template = model_filename_template
@@ -78,7 +78,7 @@ class ModelSet:
             **self.run_params,
             name=model_name,
         ) as run:
-            wandb.config.update(dict(seed=seed))
+            wandb.config.update(dict(seed=seed, out_dir=self.model_path))
             model = train_func(seed)
             with open(self.get_model_filename(seed), "wb") as f:
                 self.serializer.save(model, f)
@@ -220,11 +220,23 @@ class ModelSet:
             res = parse.parse(self.model_filename_template, filename.name)
             try:
                 seeds.append(int(res["seed"]))
-            except KeyError:
+            except:
                 pass
         return seeds
 
+    def __len__(self):
+        return len(self.get_seeds())
+
     def apply(self, apply_func, seeds=None, verbose=False, n_jobs=4, **parallel_kwargs):
+        """
+        Apply a function to models in the set.
+
+        Args:
+          apply_func: Function which takes as input a loaded model.
+          seeds: Seeds to which to apply the function.
+          verbose: Whether to show a progress bar.
+          n_jobs: Number of jobs to execute in parallel.
+        """
         if seeds is None:
             seeds = self.get_seeds()
 
