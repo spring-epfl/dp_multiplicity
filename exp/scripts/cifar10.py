@@ -33,6 +33,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
 from opacus import PrivacyEngine
+from opacus.accountants import PRVAccountant
 from opacus.validators import ModuleValidator
 from opacus.distributed import DifferentiallyPrivateDistributedDataParallel as DPDDP
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -240,6 +241,15 @@ def main():
     else:
         args.sigma = float(args.sigma)
 
+    acct = PRVAccountant()
+    dataset_size = 50_000
+    sample_rate = args.batch_size / dataset_size
+    for i in tqdm(range(int(args.epochs * (1.0 / sample_rate)))):
+        acct.step(noise_multiplier=args.sigma, sample_rate=sample_rate)
+    print("Estimating privacy...")
+    estimated_epsilon = acct.get_epsilon(delta=args.delta)
+    print(f"Estimated ε = {estimated_epsilon}")
+
     # # Sets `world_size = 1` if you run on a single GPU with `args.local_rank = -1`
     # if args.local_rank != -1 or args.device != "cpu":
     #     rank, local_rank, world_size = setup(args)
@@ -388,6 +398,7 @@ def main():
             "out_path": checkpoint_filename,
             "dataset": "cifar10",
             "model": args.arch,
+            "seed": args.seed,
             "sigma": args.sigma,
             "delta": args.delta,
             "epochs": args.epochs,
@@ -484,7 +495,7 @@ def parse_args():
     )
     parser.add_argument(
         "--epochs",
-        default=50,
+        default=30,
         type=int,
         metavar="N",
         help="number of total epochs to run",
@@ -508,7 +519,7 @@ def parse_args():
     )
     parser.add_argument(
         "--batch-size",
-        default=128,
+        default=64,
         type=int,
         metavar="N",
         help="approximate bacth size",
