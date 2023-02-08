@@ -20,14 +20,20 @@ targets = {
     "chess-krvk": "draw",
     "chess-krvkp": "won",
     "congress-voting": "democrat",
+    # Contraceptive method choice. Target: Contraceptive method used (no-use, long-term, short-term)
     "contrac": 1,
+    # Credit card applications. Target: Approved.
     "credit-approval": "+",
+    # Cardiotocography. Target: Fetal state (normal, suspect, pathologic)
     "ctg": 1,
     "cylinder-bands": "noband",
+    # Differential diagnosis of erythemato-squamous diseases. Target: disease (psoriasis, seboreic
+    # dermatitis, lichen planus, pityriasis rosea, cronic dermatitis, and pityriasis rubra pilaris)
     "dermatology": 1,
     "german-credit": 1,
     "heart-cleveland": range(1, 5 + 1),
     "ilpd": 1,
+    # Mammographic mass. Target: severity (benign, malignant)
     "mammo": 1,
     "mushroom": "p",
     "wine": 2,
