@@ -1,4 +1,4 @@
-program: python exp/tabular_dp.py --condition=None
+program: python exp/scripts/tabular_dp.py --condition=None
 method: grid
 parameters:
     dataset:
@@ -11,6 +11,6 @@ parameters:
         values:
         - lr
     epsilon:
-        values: [0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00, 2.50, 3.00, 3.50, 4.00, 4.5, 5.0]
+        values: [0.50, 0.75, 1.00, 1.25, 1.50, 1.75, 2.00, 2.50]
     num_models:
         value: 5000
