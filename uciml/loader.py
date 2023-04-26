@@ -5,6 +5,8 @@ Author: Lua Streit
 import pathlib
 import pandas as pd
 
+from sklearn.preprocessing import StandardScaler
+
 
 DATA_DIR = pathlib.Path(__file__).parent.resolve() / "data"
 
@@ -652,13 +654,15 @@ def one_hot_encode(df, sep="~"):
     return result
 
 
-def load_dataset(name, one_hot_encoded=True, dropna=False):
+def load_dataset(name, one_hot_encoded=True, dropna=False, norm=True):
     """
     Loads the dataset with the given name, and returns two DataFrames with the features and label.
 
     Args:
         name: string name of the dataset to load, without the '.csv' extension.
         one_hot_encoded (bool): whether to one-hot encode categorical variables.
+        dropna (bool): Whether to drop NAN rows
+        norm: Whether to normalize the numeric features.
 
     Returns:
         X: DataFrame with the features
@@ -679,18 +683,27 @@ def load_dataset(name, one_hot_encoded=True, dropna=False):
         na_values=["?"],
     )
 
+    if dropna:
+        df = df.dropna()
+
     # We want the target label/s to be 1, and the other/s 0
     if isinstance(targets[name], range):
         df["label"] = (df["label"].isin(targets[name])).astype(int)
     else:
         df["label"] = (df["label"] == targets[name]).astype(int)
 
+    # Scale the numeric features. Admits some test data leakage.
+    if norm:
+        numeric_cols = [
+            col for col in df.select_dtypes(["int", "float"]).columns if col != "label"
+        ]
+        scaler = StandardScaler()
+        scaled_values = scaler.fit_transform(df[numeric_cols])
+        df[numeric_cols] = scaled_values
+
     # If the dataset is german, replace the encoded categories by their meaning
     if name == "german-credit":
         df = df.replace(german_mappings)
-
-    if dropna:
-        df = df.dropna()
 
     # Create the dataframe of features
     X = df.drop(columns=["label"])
