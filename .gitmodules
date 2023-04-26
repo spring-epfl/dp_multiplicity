@@ -1,0 +1,3 @@
+[submodule "ext/Handcrafted-DP"]
+	path = ext/Handcrafted-DP
+	url = git@github.com:bogdan-kulynych/Handcrafted-DP.git
