@@ -1,4 +1,4 @@
-program: pipenv run python ext/Handcrafted-DP/cnns.py --dataset=cifar10 --use_scattering --batch_size=8192 --lr=4 --input_norm=BN --bn_noise_multiplier=8 --device=cuda:1
+program: poetry run python ext/Handcrafted-DP/cnns.py --dataset=cifar10 --use_scattering --batch_size=8192 --lr=4 --input_norm=BN --bn_noise_multiplier=8 --device=cuda:1
 method: grid
 parameters:
     noise_multiplier:

@@ -3,7 +3,7 @@
 ## Installation
 
 ```
-pipenv install
+poetry install
 ```
 
 ## Launching Experiments
