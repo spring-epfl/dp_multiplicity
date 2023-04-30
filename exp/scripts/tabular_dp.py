@@ -31,8 +31,8 @@ def train_func(model, X_train, y_train, seed, epsilon=None):
     return clf
 
 
-def get_data_splits(dataset):
-    X, y = load_dataset(dataset, dropna=True)
+def get_data_splits(dataset, **kwargs):
+    X, y = load_dataset(dataset, dropna=True, **kwargs)
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.25, shuffle=True, stratify=y, random_state=0
     )
