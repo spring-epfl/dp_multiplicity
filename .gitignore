@@ -9,3 +9,4 @@ out
 runs
 wandb
 bn_stats
+.data

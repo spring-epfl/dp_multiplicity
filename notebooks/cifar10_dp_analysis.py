@@ -5,7 +5,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.14.0
+#       jupytext_version: 1.14.4
 #   kernelspec:
 #     display_name: Python 3 (ipykernel)
 #     language: python
@@ -13,13 +13,30 @@
 # ---
 
 # %%
+import pathlib
+
+handcrafted_dp_path = pathlib.Path("../ext/Handcrafted-DP")
+bn_stats_save_dir = pathlib.Path("../bn_stats/cifar10")
+experiment_spec_path = pathlib.Path("../exp/config/cifar10_dp_experiments.yml")
+base_model_path = pathlib.Path("../out")
+runs_data_path = pathlib.Path("cifar10_runs_data_backup.pkl")
+
+wandb_entity = "bogdanspace/multiplicities"
+device = "cuda:1"
+
+# %%
 # %load_ext autoreload
 # %autoreload 2
 
 # %%
-import pathlib
+import os
+import sys
+import pickle
 import itertools
 import collections
+
+# %%
+sys.path.append(str(handcrafted_dp_path))
 
 # %%
 import numpy as np
@@ -30,7 +47,8 @@ from tqdm import autonotebook as tqdm
 from matplotlib import pyplot as plt
 
 from src.model_set import ModelSet
-from exp.cifar10 import convnet
+from data import get_scattered_loader, get_scatter_transform, get_data
+from models import CNNS
 
 sns.set(style="white", context="paper", font_scale=1.75)
 
@@ -39,47 +57,44 @@ import torch
 from torchvision.datasets import CIFAR10
 from torchvision import transforms
 
-# %%
-experiment_spec_path = pathlib.Path("../exp/config/cifar10_dp_experiments.yml")
-base_model_path = pathlib.Path("../out")
-
+# %% [markdown]
+# ## Get experiment metadata
 
 # %%
-def get_model_set_name(dataset, model, epsilon):
-    if isinstance(epsilon, int):
-        return f"{dataset}_{model}_{epsilon}.0"
-    else:
-        return f"{dataset}_{model}_{epsilon}"
+if runs_data_path.exists():
+    with open(runs_data_path, "rb") as f:
+        runs_data = pickle.load(f)
+        
+else:
+    summary_list, config_list, name_list = [], [], []
+    
+    import wandb
+    tracker = wandb.Api()
+    runs = tracker.runs(wandb_entity, {"config.dataset": {"$eq": "cifar10"}})
 
+    for run in tqdm.tqdm(runs):        
+        # .summary contains the output keys/values for metrics like accuracy.
+        #  We call ._json_dict to omit large files 
+        summary_list.append(run.summary._json_dict)
 
-# %%
-summary_list, config_list, name_list = [], [], []
+        # .config contains the hyperparameters.
+        #  We remove special values that start with _.
+        config_list.append(
+            {k: v for k,v in run.config.items()
+             if not k.startswith('_')})
 
-# %%
-import wandb
-tracker = wandb.Api()
-runs = tracker.runs(f"bogdanspace/multiplicities", {"config.dataset": {"$eq": "cifar10"}})
+        # .name is the human-readable name of the run.
+        name_list.append(run.name)
 
-for run in tqdm.tqdm(runs):        
-    # .summary contains the output keys/values for metrics like accuracy.
-    #  We call ._json_dict to omit large files 
-    summary_list.append(run.summary._json_dict)
+    runs_data = pd.DataFrame({
+        "summary": summary_list,
+        "config": config_list,
+        "name": name_list
+    })
 
-    # .config contains the hyperparameters.
-    #  We remove special values that start with _.
-    config_list.append(
-        {k: v for k,v in run.config.items()
-         if not k.startswith('_')})
-
-    # .name is the human-readable name of the run.
-    name_list.append(run.name)
-
-runs_data = pd.DataFrame({
-    "summary": summary_list,
-    "config": config_list,
-    "name": name_list
-})
-
+    with open(runs_data_path, "wb") as f:
+        pickle.dump(runs_data, f)
+        
 runs_data.head()
 
 # %%
@@ -100,11 +115,11 @@ for _, run in runs_data.iterrows():
     run_metadata = {
         "timestamp": timestamp,
         "test_acc": run.summary.get("test_acc"),
-        "normalized_adv": 2 * (run.summary.get("test_acc") - baseline),
         "beats_baseline": run.summary.get("test_acc") > baseline,
-#         "seed": run.config.get("seed"),
+        "epochs": run.summary.get("epoch"),
+        "seed": run.config.get("seed"),
+        "sigma": run.config.get("sigma"),
         "dataset": run.config.get("dataset"),
-        "model": run.config.get("model"),
         "epsilon": run.summary.get("epsilon"),
         "model_set_name": run.config.get("name"),
     }
@@ -113,8 +128,34 @@ for _, run in runs_data.iterrows():
 exp_metadata = pd.DataFrame(exp_cached_metadata.values())
 exp_metadata
 
+# %% [markdown]
+# ## Retrieve predictions
+
 # %%
 spec = parse_spec(experiment_spec_path)
+
+# %%
+# Reproduce the data loaders.
+mini_batch_size = 256
+
+train_data, test_data = get_data("cifar10", augment=False)
+scattering, K, _ = get_scatter_transform("cifar10")
+
+raw_test_loader = torch.utils.data.DataLoader(
+    test_data, batch_size=mini_batch_size, shuffle=False, num_workers=1, pin_memory=True,
+)
+test_loader = get_scattered_loader(raw_test_loader, scattering.to(device), device=device)
+
+# %%
+# Reproduce the data pre-computed batch norm stats.
+noise_multiplier = 8.0
+
+mean_path = os.path.join(bn_stats_save_dir, f"mean_bn_{len(train_data)}_{noise_multiplier}_True.npy")
+var_path = os.path.join(bn_stats_save_dir, f"var_bn_{len(train_data)}_{noise_multiplier}_True.npy")
+
+mean = torch.from_numpy(np.load(mean_path)).to(device)
+var = torch.from_numpy(np.load(var_path)).to(device)
+bn_stats = (mean, var)
 
 
 # %%
@@ -122,14 +163,12 @@ class TorchSerializer:
     def load(self, f):
         print(f.name)
         state = torch.load(f)
-        if state["model"] == "simple":
-            model = convnet(num_classes=10)
-            state_dict = {k.lstrip("_module."): v for k, v in state["state_dict"].items()}
-            model.load_state_dict(state_dict)
+        model = CNNS["cifar10"](K, input_norm="BN", bn_stats=bn_stats, size=None).to(device)
+        model.load_state_dict(state["state_dict"])
         return model
 
-# Test.
-with open("../out/cifar10_simple_0.5/model_0", "rb") as f:
+# Test deserialization.
+with open("../out/cifar10_scatternet_4.0/model_49", "rb") as f:
     loaded_model = TorchSerializer().load(f)
 
 # %%
@@ -147,20 +186,11 @@ for model_set_name in exp_metadata.model_set_name.unique():
 len(model_sets)
 
 # %%
-multiplicity_data = {}
+# with open("cifar10_multiplicity_data_backup.pkl", "rb") as f:
+#     multiplicity_data = pickle.load(f)
 
 # %%
-normalize = [
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-]
-test_transform = transforms.Compose(normalize)
-test_dataset = CIFAR10("../../cifar10", train=False, transform=test_transform)
-test_loader = torch.utils.data.DataLoader(
-    test_dataset,
-    batch_size=64,
-    shuffle=False,
-)
+multiplicity_data = {}
 
 
 # %%
@@ -201,6 +231,9 @@ for model_set_name in tqdm.tqdm(model_sets_to_process):
     multiplicity_data[model_set_name] = pd.DataFrame(model_set_output)
 
 
+# %% [markdown]
+# ## Evaluate disagreement metrics
+
 # %%
 def class_disc(multiplicity_data):
     results = []
@@ -212,24 +245,6 @@ def class_disc(multiplicity_data):
         for class_idx in range(example_outputs.shape[1]):
             metric = example_outputs[:, class_idx].max() \
                    - example_outputs[:, class_idx].min()
-            results.append(
-                dict(
-                    example_id=example_id,
-                    class_idx=class_idx,
-                    metric_value=metric,
-                )
-            )
-    return pd.DataFrame(results)
-
-def class_var(multiplicity_data):
-    results = []
-    for example_id in multiplicity_data.example_id.unique():
-        example_outputs = np.array([
-            vec for vec in multiplicity_data.query(
-            f"example_id == {example_id}").pred
-        ])
-        for class_idx in range(example_outputs.shape[1]):
-            metric = example_outputs[:, class_idx].var()
             results.append(
                 dict(
                     example_id=example_id,
@@ -263,7 +278,6 @@ def binarized_var(multiplicity_data):
 
 # %%
 metrics = {
-#     "class_var": class_var,
     "binarized_var": binarized_var,
 }
 
@@ -288,10 +302,13 @@ for model_set_name, model_set in tqdm.tqdm(list(model_sets.items())):
     
     metrics_data[model_set_name] = pd.concat(metrics_output)
 
+# %% [markdown]
+# ## Plots
+
 # %%
 exp_stats = (
-    exp_metadata.groupby(["dataset", "model", "epsilon", "model_set_name"])
-    .agg(dict(test_acc="mean"))
+    exp_metadata.groupby(["dataset", "model_set_name"])
+    .agg(dict(test_acc="mean", epsilon="max"))
     .reset_index()
 )
 
@@ -305,37 +322,20 @@ plot_data
 combined_data = pd.concat([
     (
         plot_data
-#         .query("metric_name == 'var'")
         .rename(columns={"metric_value": "value", "metric_name": "metric"})
         .drop(columns=["test_acc", "example_id"])
     ),
     (
         exp_metadata
         .query(f"model_set_name in {list(plot_data.model_set_name.unique())}")
+        .assign(epsilon=lambda df: exp_stats.set_index("model_set_name").loc[df.model_set_name].epsilon.values)
         [
-            ["dataset", "model", "epsilon", "model_set_name", "test_acc"]
+            ["dataset", "epsilon", "model_set_name", "test_acc"]
         ]
-        .assign(value=lambda df: 2 * (df["test_acc"] - 0.1))
-        .assign(metric="normalized_adv")
+        .rename(columns={"test_acc": "value"})
+        .assign(metric="test_acc")
     )
 ]).assign(epsilon=lambda df: df["epsilon"].round(4))
-
-# Normalize.
-def normalize_metric(data_slice):
-    baseline = data_slice.query(f"epsilon == {data_slice.epsilon.min()}").value.mean()
-    result = data_slice.copy()
-    result["value"] = (data_slice["value"] / baseline - 1) * 100
-    return result
-
-normalized_combined_data = (
-    combined_data
-    .groupby(["dataset", "model", "metric"], group_keys=False)
-    .apply(normalize_metric)
-    .reset_index()
-)
-
-# %%
-sorted(combined_data.epsilon.unique())
 
 # %%
 g = sns.relplot(
@@ -347,7 +347,7 @@ g = sns.relplot(
             "epsilon": "Privacy param. ε",
         })
         .replace({
-            "normalized_adv": "Normalized accuracy",
+            "test_acc": "Test accuracy",
             "binarized_var": "Disagreement",
         })
     ),
@@ -358,37 +358,40 @@ g = sns.relplot(
     col="Measure",
     marker="o",
     err_style="bars",
-    col_order=["Normalized accuracy", "Disagreement"],
+    errorbar=("ci", 99),
+    col_order=["Test accuracy", "Disagreement"],
     facet_kws={'sharey': False, 'sharex': True}
 )
 
+plt.xticks([6, 5, 4, 3, 2])
 plt.gca().invert_xaxis()
-for ax in g.axes[0]:
-    ax.set_title("")
-# plt.savefig("../images/cifar10_mult.pdf", bbox_inches="tight")
+# for ax in g.axes[0]:
+#     ax.set_title("")
+plt.savefig("../images/cifar10_mult.pdf", bbox_inches="tight")
+
+# %% [markdown]
+# ## Table
 
 # %%
-g = sns.relplot(
-    data=(
-        combined_data
-        .rename(columns={
-            "metric": "Measure",
-            "value": "Measure value",
-            "epsilon": "Privacy param. ε",
-        })
-        .replace({
-            "binarized_var": "Disagreement",
-        })
-    ),
-    kind="line",
-    x=r"Privacy param. ε",
-    y="Measure value",
-    hue="class_idx",
-    marker="o",
-    err_style="bars",
-    facet_kws={'sharey': False, 'sharex': True},
-    legend=False,
+auc_data = (
+    combined_data
+    .query("metric in ['test_acc']")
+    .pivot_table(
+        index=["dataset", "epsilon"], columns="metric", values="value",
+        aggfunc=("mean", "std"),
+    )
 )
 
-plt.gca().invert_xaxis()
-# plt.savefig("../images/cifar10_disparities.pdf", bbox_inches="tight")
+pred_var_data = (
+    combined_data
+    .query("metric in ['binarized_var']")
+    .assign(epsilon=lambda df: df.epsilon.astype(float))
+    .pivot_table(
+        index=["dataset", "epsilon"], columns="metric", values="value",
+        aggfunc=("mean", "std", "median", "min", "max",
+                 lambda df: np.percentile(df, 90), lambda df: np.percentile(df, 95)),
+    )
+)[["mean", "std", "min", "median", "max", "<lambda_0>", "<lambda_1>"]].rename(
+    columns={"<lambda_0>": "90pctl", "<lambda_1>": "95pctl"})
+
+print(pd.concat([auc_data, pred_var_data], axis=1).round(2).to_latex())
